@@ -1,4 +1,4 @@
-Black Hole
+# Black Hole
 
 A real-time WebGL-based black hole simulation that showcases gravitational lensing, an accretion disk, and background stars using ray tracing techniques. This project uses fragment shaders to simulate how light behaves around a black hole based on general relativity.
 

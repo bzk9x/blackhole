@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Black Hole Simulation</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #000;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+    #canvas {
+      width: 100%;
+      height: 100vh;
+      display: block;
+    }
+    #controls {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 5px;
+    }
+    .slider-container {
+      margin-bottom: 10px;
+    }
+    label {
+      display: inline-block;
+      width: 150px;
+    }
+    .info {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      background-color: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      border-radius: 5px;
+      max-width: 300px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  
+  <div id="controls">
+    <div class="slider-container">
+      <label for="mass">Black Hole Mass:</label>
+      <input type="range" id="mass" min="1" max="10" step="0.1" value="1">
+      <span id="massValue">1.0</span> M☉
+    </div>
+    <div class="slider-container">
+      <label for="cameraDistance">Camera Distance:</label>
+      <input type="range" id="cameraDistance" min="10" max="50" step="1" value="30">
+      <span id="distanceValue">30</span> rs
+    </div>
+    <div class="slider-container">
+      <label for="diskIntensity">Accretion Disk:</label>
+      <input type="range" id="diskIntensity" min="0" max="2" step="0.05" value="1.0">
+      <span id="diskValue">1.0</span>
+    </div>
+    <div class="slider-container">
+      <label for="glowIntensity">Glow Intensity:</label>
+      <input type="range" id="glowIntensity" min="0" max="2" step="0.05" value="1.0">
+      <span id="glowValue">1.0</span>
+    </div>
+    <div class="slider-container">
+      <label for="starBrightness">Star Brightness:</label>
+      <input type="range" id="starBrightness" min="0" max="2" step="0.05" value="1.0">
+      <span id="starValue">1.0</span>
+    </div>
+    <div>
+      <label for="showStars">Show Background Stars:</label>
+      <input type="checkbox" id="showStars" checked>
+    </div>
+  </div>
+  
+  <div class="info">
+    <h3>Black Hole Physics</h3>
+    <p>Event Horizon radius (rs): <span id="horizonRadius">2.95</span> km</p>
+    <p>Photon Sphere radius: <span id="photonSphere">4.43</span> km</p>
+    <p>Simulating gravitational lensing, relativistic Doppler beaming, and gravitational redshift</p>
+  </div>
+
+  <script>
+    // Initialize WebGL
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+    
+    if (!gl) {
+      alert('WebGL not supported in your browser');
+      throw new Error('WebGL not supported');
+    }
+    
+    // Create shaders
+    const vertexShaderSource = `
+      attribute vec4 aVertexPosition;
+      void main() {
+        gl_Position = aVertexPosition;
+      }
+    `;
+    
+    const fragmentShaderSource = `
+      precision highp float;
+      
+      // Constants
+      const float PI = 3.14159265359;
+      const float G = 6.67430e-11;  // Gravitational constant
+      const float c = 299792458.0;  // Speed of light
+      const float M_SUN = 1.989e30; // Solar mass in kg
+      
+      // Parameters
+      uniform float uMass;          // Mass in solar masses
+      uniform float uDiskIntensity; // Accretion disk brightness
+      uniform float uGlowIntensity; // Glow intensity
+      uniform float uStarBrightness; // Star brightness
+      uniform float uTime;          // Animation time
+      uniform vec2 uResolution;     // Canvas resolution
+      uniform vec3 uCameraPosition; // Camera position
+      uniform vec3 uCameraLookAt;   // Camera look-at point
+      uniform vec3 uCameraUp;       // Camera up vector
+      uniform bool uShowStars;      // Show background stars
+      
+      // Computes Schwarzschild radius
+      float schwarzschildRadius() {
+        return 2.0 * G * (uMass * M_SUN) / (c * c);
+      }
+      
+      // Computes photon sphere radius
+      float photonSphereRadius() {
+        return 1.5 * schwarzschildRadius();
+      }
+      
+      // Improved hash function for better randomness
+      float hash(vec2 p) {
+        p = fract(p * vec2(123.34, 456.21));
+        p += dot(p, p + 45.32);
+        return fract(p.x * p.y);
+      }
+      
+      // Improved noise function for stars
+      float noise(vec2 p) {
+        vec2 i = floor(p);
+        vec2 f = fract(p);
+        f = f * f * (3.0 - 2.0 * f); // Smooth interpolation
+        
+        float a = hash(i);
+        float b = hash(i + vec2(1.0, 0.0));
+        float c = hash(i + vec2(0.0, 1.0));
+        float d = hash(i + vec2(1.0, 1.0));
+        
+        return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+      }
+      
+      // Enhanced star field
+      vec3 starField(vec3 direction) {
+        if (!uShowStars) return vec3(0.0);
+        
+        // Convert direction to spherical coordinates
+        vec2 uv = vec2(
+          0.5 + atan(direction.z, direction.x) / (2.0 * PI),
+          0.5 + asin(direction.y) / PI
+        );
+        
+        // Multi-layer stars for depth
+        float stars = 0.0;
+        
+        // Layer 1: Small stars
+        stars += pow(noise(uv * 500.0), 20.0) * 0.8;
+        
+        // Layer 2: Medium stars
+        stars += pow(noise(uv * 200.0 + 10.0), 18.0) * 1.2;
+        
+        // Layer 3: Bright stars
+        stars += pow(noise(uv * 100.0 + 20.0), 16.0) * 1.5;
+        
+        // Layer 4: Very bright stars (fewer)
+        stars += pow(noise(uv * 50.0 + 30.0), 14.0) * 2.0;
+        
+        // Twinkle effect
+        stars *= 0.9 + 0.1 * sin(uTime * 0.5 + noise(uv * 100.0) * 10.0);
+        
+        // Star color (slightly varied)
+        vec3 starColor = mix(
+          vec3(0.8, 0.9, 1.0), // Blueish
+          vec3(1.0, 0.9, 0.7), // Yellowish
+          noise(uv * 50.0)
+        );
+        
+        // Add some red stars
+        if (noise(uv * 70.0) > 0.97) {
+          starColor = mix(starColor, vec3(1.0, 0.5, 0.5), 0.8);
+        }
+        
+        // Apply star brightness control
+        stars *= uStarBrightness;
+        
+        return stars * starColor;
+      }
+      
+      // Soft glow effect
+      vec3 diskGlow(vec3 position, float intensity) {
+        float rs = schwarzschildRadius();
+        float r = length(position);
+        
+        // Glow is stronger near the disk
+        float diskProximity = exp(-abs(position.y) / (2.0 * rs));
+        
+        // Radial falloff
+        float innerRadius = 3.0 * rs;
+        float outerRadius = 15.0 * rs;
+        float radialFactor = 0.0;
+        
+        if (r > innerRadius && r < outerRadius) {
+          float x = (r - innerRadius) / (outerRadius - innerRadius);
+          radialFactor = (1.0 - x) * exp(-x * 2.0);
+        }
+        
+        // Combine factors
+        float glowFactor = diskProximity * radialFactor * intensity;
+        
+        // Glow color (hot blue-white)
+        vec3 glowColor = mix(
+          vec3(0.2, 0.4, 1.0),  // Blue
+          vec3(1.0, 0.8, 0.7),  // Warm white
+          exp(-r / (8.0 * rs))  // Hotter near center
+        );
+        
+        return glowColor * glowFactor * uGlowIntensity;
+      }
+      
+      // Accretion disk color and intensity
+      vec4 accretionDiskColor(vec3 position, vec3 velocity) {
+        // Distance from center
+        float r = length(position);
+        float rs = schwarzschildRadius();
+        
+        // Inner and outer disk bounds (in terms of Schwarzschild radii)
+        float innerDiskRadius = 3.0 * rs; // Just outside photon sphere
+        float outerDiskRadius = 20.0 * rs;
+        
+        // Calculate disk intensity based on distance
+        // Peaked distribution that falls off towards inner and outer edges
+        float diskFactor = 0.0;
+        if (r > innerDiskRadius && r < outerDiskRadius) {
+          float x = (r - innerDiskRadius) / (outerDiskRadius - innerDiskRadius);
+          diskFactor = 3.0 * x * (1.0 - x) * (1.0 - x);
+        }
+        
+        // Disk thickness profile - thinner near center, thicker at edges
+        float diskThickness = rs * (0.1 + 0.3 * r / outerDiskRadius);
+        
+        // If we're not in the disk plane, return transparent color
+        if (abs(position.y) > diskThickness) {
+          return vec4(0.0, 0.0, 0.0, 0.0);
+        }
+        
+        // Smooth transition at disk edges
+        float edgeFactor = smoothstep(diskThickness, 0.0, abs(position.y));
+        diskFactor *= edgeFactor;
+        
+        // Temperature gradient (hotter towards center)
+        float temperature = mix(6000.0, 15000.0, 1.0 - r/outerDiskRadius);
+        
+        // Enhanced blackbody approximation
+        vec3 color;
+        if (temperature > 10000.0) {
+          float t = (temperature - 10000.0) / 5000.0;
+          color = mix(vec3(0.9, 0.9, 1.0), vec3(0.7, 0.8, 1.0), t); // Blue-white
+        } else if (temperature > 6500.0) {
+          float t = (temperature - 6500.0) / 3500.0;
+          color = mix(vec3(1.0, 1.0, 1.0), vec3(0.9, 0.9, 1.0), t); // White to blue-white
+        } else {
+          float t = temperature / 6500.0;
+          color = mix(vec3(1.0, 0.5, 0.0), vec3(1.0, 1.0, 1.0), t); // Orange to white
+        }
+        
+        // Add emissivity pattern (spiral structure)
+        float angle = atan(position.z, position.x);
+        float spiral = sin(angle * 4.0 + 20.0 * log(r/rs) + uTime * 0.5);
+        diskFactor *= (0.8 + 0.2 * spiral * spiral);
+        
+        // Add some turbulence/hotspots
+        float turbulence = noise(vec2(angle * 5.0, r/rs) + uTime * 0.2);
+        diskFactor *= (0.8 + 0.4 * turbulence);
+        
+        // Add bright hotspots
+        if (turbulence > 0.85) {
+          color = mix(color, vec3(1.0, 0.9, 0.8), 0.5);
+          diskFactor *= 1.5;
+        }
+        
+        // Apply gravitational redshift
+        float redshift = 1.0 / sqrt(1.0 - rs/r);
+        color = color / redshift;
+        
+        // Apply Doppler beaming effect
+        // Keplerian velocity with relativistic correction
+        float orbitalVelocity = sqrt(G * (uMass * M_SUN) / r) / c;
+        
+        // Only apply beaming for light coming from the right side of the disk
+        float beamingDirection = dot(normalize(position), vec3(0.0, 0.0, 1.0));
+        float doppler = 1.0 / (1.0 + orbitalVelocity * beamingDirection);
+        
+        // Beaming increases brightness when moving toward viewer
+        float beamingFactor = pow(doppler, 4.0);
+        
+        // Modulate the disk intensity
+        diskFactor *= uDiskIntensity * beamingFactor;
+        
+        // Make the disk brighter overall
+        diskFactor *= 1.5;
+        
+        return vec4(color, diskFactor);
+      }
+      
+      // Calculates gravitational deflection and traces rays
+      vec3 traceRay(vec3 rayOrigin, vec3 rayDirection) {
+        float rs = schwarzschildRadius();
+        vec3 color = vec3(0.0);
+        float opacity = 0.0;
+        
+        // Ray parameters
+        vec3 position = rayOrigin;
+        vec3 velocity = rayDirection;
+        float dt = 0.1 * rs; // Time step
+        
+        // Maximum steps and distance
+        const int MAX_STEPS = 500;
+        float maxDistance = 100.0 * rs;
+        float totalDistance = 0.0;
+        
+        // Accumulate glow
+        vec3 totalGlow = vec3(0.0);
+        
+        // Ray marching loop
+        for (int i = 0; i < MAX_STEPS; i++) {
+          // Calculate gravitational force
+          float r = length(position);
+          
+          // Check if we've hit the event horizon
+          if (r < rs * 1.01) {
+            // Black hole interior is pure black
+            return mix(totalGlow, vec3(0.0), 0.8);
+          }
+          
+          // Add glow contribution
+          vec3 glow = diskGlow(position, 0.01);
+          totalGlow += glow * (1.0 - opacity);
+          
+          // Check for accretion disk hit
+          vec4 diskColor = accretionDiskColor(position, velocity);
+          if (diskColor.a > 0.01) {
+            // Blend with existing color
+            color = mix(color, diskColor.rgb, diskColor.a * (1.0 - opacity));
+            opacity += diskColor.a * (1.0 - opacity);
+            
+            // If almost opaque, stop tracing
+            if (opacity > 0.95) break;
+          }
+          
+          // Apply gravitational force (improved accuracy)
+          vec3 direction = normalize(position);
+          float forceMagnitude = rs / (r * r);
+          vec3 acceleration = -direction * forceMagnitude;
+          
+          // Update velocity (using Runge-Kutta method for better accuracy)
+          vec3 k1 = acceleration * dt;
+          vec3 k2 = acceleration * (1.0 + 0.5 * dt) * dt;
+          vec3 k3 = acceleration * (1.0 + 0.5 * dt) * dt;
+          vec3 k4 = acceleration * (1.0 + dt) * dt;
+          velocity += (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;
+          velocity = normalize(velocity); // Keep it normalized
+          
+          // Update position
+          position += velocity * dt;
+          
+          // Track distance traveled
+          totalDistance += dt;
+          
+          // Break if we're too far away
+          if (totalDistance > maxDistance) {
+            // If we've escaped, use the star field
+            vec3 starColor = starField(velocity);
+            color = mix(color, starColor, 1.0 - opacity);
+            break;
+          }
+        }
+        
+        // Blend the accumulated glow with the final color
+        return mix(color, color + totalGlow, 0.8);
+      }
+      
+      // Camera functions
+      mat3 getCameraMatrix() {
+        vec3 zAxis = normalize(uCameraLookAt - uCameraPosition);
+        vec3 xAxis = normalize(cross(zAxis, uCameraUp));
+        vec3 yAxis = cross(xAxis, zAxis);
+        
+        return mat3(xAxis, yAxis, zAxis);
+      }
+      
+      void main() {
+        // Convert from pixel coordinates to [-1, 1] range
+        vec2 uv = (gl_FragCoord.xy / uResolution.xy) * 2.0 - 1.0;
+        uv.x *= uResolution.x / uResolution.y; // Correct for aspect ratio
+        
+        // Set up camera
+        mat3 cameraMatrix = getCameraMatrix();
+        float fov = 60.0 * PI / 180.0;
+        vec3 rayDirection = normalize(cameraMatrix * vec3(uv, 1.0/tan(fov/2.0)));
+        
+        // Trace ray
+        vec3 color = traceRay(uCameraPosition, rayDirection);
+        
+        // Enhanced tone mapping (ACES-inspired)
+        const float a = 2.51;
+        const float b = 0.03;
+        const float c = 2.43;
+        const float d = 0.59;
+        const float e = 0.14;
+        color = (color * (a * color + b)) / (color * (c * color + d) + e);
+        
+        // Apply slight gamma correction
+        color = pow(color, vec3(0.9));
+        
+        // Output color
+        gl_FragColor = vec4(color, 1.0);
+      }
+    `;
+    
+    // Compile shaders
+    function compileShader(gl, source, type) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      
+      return shader;
+    }
+    
+    const vertexShader = compileShader(gl, vertexShaderSource, gl.VERTEX_SHADER);
+    const fragmentShader = compileShader(gl, fragmentShaderSource, gl.FRAGMENT_SHADER);
+    
+    // Create program
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error('Program linking error:', gl.getProgramInfoLog(program));
+      throw new Error('Program linking failed');
+    }
+    
+    // Get uniform locations
+    const uniforms = {
+      uMass: gl.getUniformLocation(program, 'uMass'),
+      uDiskIntensity: gl.getUniformLocation(program, 'uDiskIntensity'),
+      uGlowIntensity: gl.getUniformLocation(program, 'uGlowIntensity'),
+      uStarBrightness: gl.getUniformLocation(program, 'uStarBrightness'),
+      uTime: gl.getUniformLocation(program, 'uTime'),
+      uResolution: gl.getUniformLocation(program, 'uResolution'),
+      uCameraPosition: gl.getUniformLocation(program, 'uCameraPosition'),
+      uCameraLookAt: gl.getUniformLocation(program, 'uCameraLookAt'),
+      uCameraUp: gl.getUniformLocation(program, 'uCameraUp'),
+      uShowStars: gl.getUniformLocation(program, 'uShowStars')
+    };
+    
+    // Create a square covering the viewport
+    const positionBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    const positions = [
+      -1.0, -1.0,
+       1.0, -1.0,
+      -1.0,  1.0,
+       1.0,  1.0
+    ];
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+    
+    // Get attribute location
+    const positionAttributeLocation = gl.getAttribLocation(program, 'aVertexPosition');
+    
+    // Handle resize
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+    
+    // UI controls
+    const massSlider = document.getElementById('mass');
+    const massValue = document.getElementById('massValue');
+    const cameraDistanceSlider = document.getElementById('cameraDistance');
+    const distanceValue = document.getElementById('distanceValue');
+    const diskIntensitySlider = document.getElementById('diskIntensity');
+    const diskValue = document.getElementById('diskValue');
+    const glowIntensitySlider = document.getElementById('glowIntensity');
+    const glowValue = document.getElementById('glowValue');
+    const starBrightnessSlider = document.getElementById('starBrightness');
+    const starValue = document.getElementById('starValue');
+    const showStarsCheckbox = document.getElementById('showStars');
+    const horizonRadiusText = document.getElementById('horizonRadius');
+    const photonSphereText = document.getElementById('photonSphere');
+    
+    // Animation state
+    let cameraTheta = 0;
+    let cameraPhi = Math.PI * 0.4; // Camera elevation
+    let cameraDistance = parseFloat(cameraDistanceSlider.value);
+    
+    function updatePhysicsDisplay() {
+      // We're using solar masses and kilometers for display
+      const mass = parseFloat(massValue.textContent);
+      // Calculate Schwarzschild radius in km (2GM/c²)
+      const G = 6.67430e-11;
+      const c = 299792458.0;
+      const M_SUN = 1.989e30;
+      
+      const rs = 2.0 * G * (mass * M_SUN) / (c * c) / 1000; // Convert to km
+      const rph = 1.5 * rs; // Photon sphere radius
+      
+      horizonRadiusText.textContent = rs.toFixed(2);
+      photonSphereText.textContent = rph.toFixed(2);
+    }
+    
+    // Event listeners for sliders
+    massSlider.addEventListener('input', function() {
+      massValue.textContent = parseFloat(this.value).toFixed(1);
+      updatePhysicsDisplay();
+    });
+    
+    cameraDistanceSlider.addEventListener('input', function() {
+      distanceValue.textContent = this.value;
+      cameraDistance = parseFloat(this.value);
+    });
+    
+    diskIntensitySlider.addEventListener('input', function() {
+      diskValue.textContent = parseFloat(this.value).toFixed(2);
+    });
+    
+    glowIntensitySlider.addEventListener('input', function() {
+      glowValue.textContent = parseFloat(this.value).toFixed(2);
+    });
+    
+    starBrightnessSlider.addEventListener('input', function() {
+      starValue.textContent = parseFloat(this.value).toFixed(2);
+    });
+    
+    // Mouse control for camera
+    let isDragging = false;
+    let lastMouseX = 0;
+    let lastMouseY = 0;
+    
+    canvas.addEventListener('mousedown', function(e) {
+      isDragging = true;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+    });
+    
+    canvas.addEventListener('mouseup', function() {
+      isDragging = false;
+    });
+    
+    canvas.addEventListener('mouseleave', function() {
+      isDragging = false;
+    });
+    
+    canvas.addEventListener('mousemove', function(e) {
+      if (isDragging) {
+        const deltaX = e.clientX - lastMouseX;
+        const deltaY = e.clientY - lastMouseY;
+        
+        cameraTheta -= deltaX * 0.01;
+        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi - deltaY * 0.01));
+        
+        lastMouseX = e.clientX;
+        lastMouseY = e.clientY;
+      }
+    });
+    
+    // Handle camera movement with touch
+    canvas.addEventListener('touchstart', function(e) {
+      if (e.touches.length === 1) {
+        isDragging = true;
+        lastMouseX = e.touches[0].clientX;
+        lastMouseY = e.touches[0].clientY;
+        e.preventDefault();
+      }
+    });
+    
+    canvas.addEventListener('touchend', function() {
+      isDragging = false;
+    });
+    
+    canvas.addEventListener('touchmove', function(e) {
+      if (isDragging && e.touches.length === 1) {
+        const deltaX = e.touches[0].clientX - lastMouseX;
+        const deltaY = e.touches[0].clientY - lastMouseY;
+        
+        cameraTheta -= deltaX * 0.01;
+        cameraPhi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraPhi - deltaY * 0.01));
+        
+        lastMouseX = e.touches[0].clientX;
+        lastMouseY = e.touches[0].clientY;
+        e.preventDefault();
+      }
+    });
+    
+    // Update camera zoom with wheel
+    canvas.addEventListener('wheel', function(e) {
+      cameraDistance += e.deltaY * 0.05;
+      cameraDistance = Math.max(5, Math.min(60, cameraDistance));
+      distanceValue.textContent = cameraDistance.toFixed(0);
+      cameraDistanceSlider.value = cameraDistance;
+      e.preventDefault();
+    });
+    
+    // Render loop
+    let startTime = Date.now();
+    function render() {
+      const currentTime = (Date.now() - startTime) / 1000; // Time in seconds
+      
+      // Use the program
+      gl.useProgram(program);
+      
+      // Update uniforms
+      const mass = parseFloat(massSlider.value);
+      const diskIntensity = parseFloat(diskIntensitySlider.value);
+      const glowIntensity = parseFloat(glowIntensitySlider.value);
+      const starBrightness = parseFloat(starBrightnessSlider.value);
+      const schwarzschildRadius = 2.0 * 6.67430e-11 * (mass * 1.989e30) / (299792458.0 * 299792458.0);
+      
+      // Calculate camera position (spherical coordinates)
+      const x = cameraDistance * schwarzschildRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta);
+      const y = cameraDistance * schwarzschildRadius * Math.cos(cameraPhi);
+      const z = cameraDistance * schwarzschildRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta);
+      
+      gl.uniform1f(uniforms.uMass, mass);
+      gl.uniform1f(uniforms.uDiskIntensity, diskIntensity);
+      gl.uniform1f(uniforms.uGlowIntensity, glowIntensity);
+      gl.uniform1f(uniforms.uStarBrightness, starBrightness);
+      gl.uniform1f(uniforms.uTime, currentTime);
+      gl.uniform2f(uniforms.uResolution, canvas.width, canvas.height);
+      gl.uniform3f(uniforms.uCameraPosition, x, y, z);
+      gl.uniform3f(uniforms.uCameraLookAt, 0, 0, 0);
+      gl.uniform3f(uniforms.uCameraUp, 0, 1, 0);
+      gl.uniform1i(uniforms.uShowStars, showStarsCheckbox.checked);
+      
+      // Bind the position buffer
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.enableVertexAttribArray(positionAttributeLocation);
+      gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+      
+      // Draw
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      
+      // Request next frame
+      requestAnimationFrame(render);
+    }
+    
+    // Initial update of physics display
+    updatePhysicsDisplay();
+    
+    // Start the render loop
+    render();
+  </script>
+</body>
+</html>

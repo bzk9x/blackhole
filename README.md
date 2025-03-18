@@ -36,4 +36,7 @@ Getting Started
 
 Demo
 
-Live Demo (if hosted) 
+Live Demo https://bzk9x.github.io/blackhole/public/low-res.html
+
+If you've got a nasa pc
+https://bzk9x.github.io/blackhole/public/high-res.html
